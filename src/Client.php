@@ -6,6 +6,7 @@ use nochso\ORM\DBA\DBA;
 use phparsenal\fastforward\Command\AbstractCommand;
 use phparsenal\fastforward\Command\Add;
 use phparsenal\fastforward\Command\Run;
+use phparsenal\fastforward\Command\Set;
 use phparsenal\fastforward\Model\Setting;
 
 class Client
@@ -69,6 +70,7 @@ class Client
         /** @var AbstractCommand[] $commands */
         $commands = array(
             new Add($this),
+            new Set($this),
             $run
         );
         foreach ($commands as $command) {
@@ -104,6 +106,10 @@ class Client
      */
     public function ordinal($number)
     {
+        // Cast only to int when it's a string with digits only
+        if (is_string($number) && ctype_digit($number)) {
+            $number = (int)$number;
+        }
         if (is_int($number)) {
             $ends = array('th', 'st', 'nd', 'rd', 'th', 'th', 'th', 'th', 'th', 'th');
             if ((($number % 100) >= 11) && (($number % 100) <= 13)) {
@@ -111,9 +117,8 @@ class Client
             } else {
                 return $number . $ends[$number % 10];
             }
-        } else {
-            return false;
         }
+        return false;
     }
 
     /**
@@ -135,17 +140,35 @@ class Client
     /**
      * Saves a setting as a key/value pair
      *
-     * @param string $key
+     * @param string $key Any string that does not contain spaces
      * @param string $value
      * @throws \Exception
      */
     public function set($key, $value)
     {
+        if (strpos($key, ' ') !== false) {
+            throw new \Exception('Error while trying to save setting "' . $key . '": Key name must not contain spaces.');
+        }
         $setting = $this->get($key, true);
         if ($setting === null) {
             $setting = new Setting();
             $setting->key = $key;
         }
+
+        if ($setting->value === null) {
+            $this->cli
+                ->out("Inserting new setting:")
+                ->out("$key = $value");
+        } elseif ($setting->value !== $value) {
+            $this->cli
+                ->out("Changing setting:")
+                ->out("$key = {$setting->value} --> <bold>$value</bold>");
+        } else {
+            $this->cli
+                ->out("Setting already up-to-date:")
+                ->out("$key = $value");
+        }
+
         $setting->value = $value;
         $setting->save();
     }
