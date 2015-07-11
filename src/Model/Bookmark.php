@@ -51,6 +51,13 @@ class Bookmark extends Model
      * @var int
      */
     public $ts_created;
+
+    /**
+     * UTC timestamp of last execution
+     *
+     * @var int
+     */
+    public $ts_executed = '';
     #endregion
 
     /**
@@ -80,6 +87,7 @@ class Bookmark extends Model
                 file_put_contents($client->getBatchPath(), $this->command);
                 break;
         }
+        $this->ts_executed = time();
         $this->hit_count++;
         $this->save();
     }

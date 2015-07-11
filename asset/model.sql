@@ -5,7 +5,8 @@ CREATE TABLE "bookmark" (
   "description" VARCHAR NOT NULL,
   "command"     VARCHAR NOT NULL,
   "hit_count"   INTEGER NOT NULL,
-  "ts_created"  INTEGER NOT NULL
+  "ts_created"  INTEGER NOT NULL,
+  "ts_executed" INTEGER NOT NULL
 );
 
 CREATE TABLE "setting" (

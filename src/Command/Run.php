@@ -3,6 +3,7 @@
 namespace phparsenal\fastforward\Command;
 
 use phparsenal\fastforward\Model\Bookmark;
+use NateDrake\DateHelper\DateFormat;
 
 class Run extends AbstractCommand implements CommandInterface
 {
@@ -80,7 +81,9 @@ class Run extends AbstractCommand implements CommandInterface
                 'Shortcut' => preg_replace($rePattern, $reReplacement, $bm->shortcut),
                 'Description' => $bm->description,
                 'Command' => $bm->command,
-                'Hits' => $bm->hit_count
+                'Hits' => $bm->hit_count,
+                'Created' => DateFormat::epochDate($bm->ts_created, DateFormat::BIG),
+                'Last Executed' => DateFormat::epochDate($bm->ts_executed, DateFormat::BIG)
             );
             $i++;
         }
