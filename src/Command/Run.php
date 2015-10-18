@@ -3,104 +3,92 @@
 namespace phparsenal\fastforward\Command;
 
 use phparsenal\fastforward\Model\Bookmark;
-use NateDrake\DateHelper\DateFormat;
+use Symfony\Component\Console\Input\ArrayInput;
+use Symfony\Component\Console\Input\InputArgument;
+use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Output\OutputInterface;
 
-class Run extends AbstractCommand implements CommandInterface
+class Run extends InteractiveCommand
 {
-    protected $name = 'run';
-
-    /**
-     * @param array $argv
-     */
-    public function run($argv)
+    protected function configure()
     {
-        $this->cli->arguments->add(
-            array(
-                'search' => array(
-                    'description' => 'Search term for the shortcut',
-                    'defaultValue' => ''
-                )
-            )
-        );
-        try {
-            $this->cli->arguments->parse();
-        } catch (\Exception $e) {
-            $this->cli->arguments->usage($this->cli, $argv);
-            $this->cli->br();
-            $this->cli->error($e->getMessage());
-            return;
-        }
-
-        // I couldn't figure out how to make CLImate "catch all" into a single argument.
-        $this->runBookmark(array_slice($argv, 1));
+        $this->setName('run')
+            ->setDescription('Search and execute a command')
+            ->addArgument('shortcut', InputArgument::OPTIONAL, 'Full shortcut or only beginning of it to search', '');
     }
 
-    private function runBookmark($searchTerms)
+    protected function execute(InputInterface $input, OutputInterface $output)
     {
-        $query = Bookmark::select();
-        foreach ($searchTerms as $term) {
-            $query->like('shortcut', $term . '%');
-        }
-        $query->orderDesc('hit_count');
-        $bookmarks = $query->all();
-        $bm = $this->selectBookmark($bookmarks, $searchTerms);
-        if ($bm !== null) {
-            $bm->run($this->client);
-        }
-    }
+        $shortcut = $input->getArgument('shortcut');
+        $bookmarks = Bookmark::select()
+            ->sortAndLimit($this->getApplication())
+            ->like('shortcut', $shortcut . '%')
+            ->all()->toArray();
 
-    /**
-     * @param $bookmarks
-     * @param $searchTerms
-     * @return null|Bookmark
-     * @throws \Exception
-     */
-    private function selectBookmark($bookmarks, $searchTerms)
-    {
-        if (count($bookmarks) == 1) {
-            /** @var Bookmark $bm */
-            $bm = $bookmarks->current();
-            if (isset($searchTerms[0])) {
-                if ($bm->shortcut == $searchTerms[0]) {
-                    return $bm;
-                }
+        $match = $this->tryExactMatch($bookmarks, $shortcut);
+        if ($match === null) {
+            $match = $this->selectMatch($bookmarks);
+        }
+        if ($match === null) {
+            if (!$this->addWhenEmpty()) {
+                $this->out->note("There are no bookmarks matching shortcut: '" . $shortcut . "'");
             }
-        }
-
-        $map = array();
-        $i = 0;
-        $rows = array();
-        $rePattern = "/(" . implode($searchTerms, '|') . ")/i";
-        // TODO Make highlighting mode configurable
-        $highlightMode = 'invert';
-        $reReplacement = "<$highlightMode>\\1</$highlightMode>";
-        foreach ($bookmarks as $id => $bm) {
-            $map[$i] = $id;
-            $rows[] = array(
-                '#' => $i,
-                'Shortcut' => preg_replace($rePattern, $reReplacement, $bm->shortcut),
-                'Description' => $bm->description,
-                'Command' => $bm->command,
-                'Hits' => $bm->hit_count,
-                'Modified' => ($bm->ts_modified !== '') ? DateFormat::epochDate((int)$bm->ts_modified, DateFormat::BIG) : 'never'
-            );
-            $i++;
-        }
-        if (!(count($rows))) {
-            $this->cli->out('No bookmarks saved. You will now be prompted to add a bookmark!');
-            $add = new Add($this->client);
-            $add->run(array());
         } else {
-            $this->client->getCLI()->table($rows);
-            $input = $this->client->getCLI()->input("Which # do you want to run?");
-            $input->accept(function ($response) use ($map) {
-                return isset($map[$response]);
-            });
-            $num = $input->prompt();
-            if (isset($map[$num])) {
-                return $bookmarks[$map[$num]];
+            // Run the selected bookmark
+            $match->run($this->getApplication(), $this->out);
+        }
+    }
+
+    /**
+     * @param Bookmark[] $bookmarks
+     * @param $shortcut
+     *
+     * @return null|Bookmark
+     */
+    private function tryExactMatch($bookmarks, $shortcut)
+    {
+        if (count($bookmarks) === 1) {
+            $bm = $bookmarks[0];
+            if ($bm->shortcut === $shortcut) {
+                return $bm;
             }
         }
         return null;
+    }
+
+    /**
+     * @param Bookmark[] $bookmarks
+     *
+     * @return mixed|null
+     */
+    private function selectMatch($bookmarks)
+    {
+        if (count($bookmarks) === 0) {
+            return null;
+        }
+        Bookmark::table($this->out, $bookmarks);
+        $answer = $this->out->ask('Enter # of command to run');
+        if ($answer !== null && ctype_digit($answer) && $answer >= 0 && $answer < count($bookmarks)) {
+            return $bookmarks[$answer];
+        }
+        return null;
+    }
+
+    /**
+     * @return bool True when there are no bookmarks.
+     *
+     * @throws \Exception
+     */
+    private function addWhenEmpty()
+    {
+        if (Bookmark::select()->count() === 0) {
+            $this->out->note("You don't have any commands saved yet. Now showing the help for the add command:");
+            $addCommand = $this->getApplication()->find('help');
+            $args = array('command' => 'help', 'command_name' => 'add');
+            $argsInput = new ArrayInput($args);
+            $addCommand->run($argsInput, $this->out);
+            return true;
+        }
+        return false;
     }
 }

@@ -2,8 +2,8 @@
 
 namespace phparsenal\fastforward;
 
-use League\CLImate\CLImate;
 use nochso\ORM\DBA\DBA;
+use Symfony\Component\Console\Style\OutputStyle;
 
 /**
  * Class Migration
@@ -18,9 +18,9 @@ class Migration
     private $client;
 
     /**
-     * @var CLImate
+     * @var OutputStyle
      */
-    private $cli;
+    private $out;
 
     /**
      * @param Client $client
@@ -28,7 +28,7 @@ class Migration
     public function __construct($client)
     {
         $this->client = $client;
-        $this->cli = $this->client->getCLI();
+        $this->out = $this->client->getOutput();
     }
 
     /**
@@ -51,7 +51,7 @@ class Migration
         }
         if ($migrated) {
             $this->saveDatabaseVersion();
-            $this->cli->out("Updated the database to version " . Client::FF_VERSION);
+            $this->out->success('Updated the database to version ' . Client::FF_VERSION);
         }
     }
 
@@ -67,7 +67,7 @@ class Migration
         if (version_compare($version, Client::FF_VERSION) !== -1) {
             return false;
         }
-        $this->cli->out("Current database version is " . Client::FF_VERSION);
+        $this->out->writeln('Current database version is ' . Client::FF_VERSION);
 
         // New migrations go here >>>
 
@@ -81,11 +81,11 @@ class Migration
      */
     private function fromUnversioned()
     {
-        $this->cli->out("Updating database from unknown version");
+        $this->out->writeln('Updating database from unknown version');
         // There's already a bookmark table, but no settings yet.
         // Basically the state of the project as this was written.
         $sql = '
-                CREATE TABLE "setting" (
+                CREATE TABLE IF NOT EXISTS "setting" (
                   "key" text NOT NULL,
                   "value" text NOT NULL
                 )';
@@ -97,25 +97,26 @@ class Migration
      * Initial setup of an empty database
      *
      * @return bool True when a migration happened
+     *
      * @throws \Exception
      */
     private function fromBlank()
     {
-        $this->cli->out("No database found. Setting up a fresh one.");
+        $this->out->note('No database found. Setting up a fresh one.');
         $setupStatements = $this->getBlankStatements();
-        $progress = $this->cli->progress()->total(count($setupStatements));
-        $progress->current(0);
+        $this->out->progressStart(count($setupStatements));
         foreach ($setupStatements as $key => $singleSql) {
             $singleSql = trim($singleSql);
             try {
                 $statement = DBA::prepare($singleSql);
                 $statement->execute();
             } catch (\PDOException $e) {
-                $msg = "SQL error: " . $e->getMessage() . "\nWhile trying to execute:\n$singleSql";
+                $msg = 'SQL error: ' . $e->getMessage() . "\nWhile trying to execute:\n$singleSql";
                 throw new \Exception($msg);
             }
-            $progress->current($key + 1);
+            $this->out->progressAdvance();
         }
+        $this->out->progressFinish();
         return true;
     }
 
@@ -123,11 +124,12 @@ class Migration
      * Returns a list of SQL statements to completely set up an empty database
      *
      * @return string[]
+     *
      * @throws \Exception
      */
     private function getBlankStatements()
     {
-        $schemaPath = "asset/model.sql";
+        $schemaPath = 'asset/model.sql';
         if (!is_file($schemaPath)) {
             throw new \Exception("Schema file could not be found: \"$schemaPath\"\nPlease make sure that you have this file.");
         }
@@ -152,7 +154,7 @@ class Migration
     public function getDatabaseVersion()
     {
         try {
-            return $this->client->get('database.version');
+            return $this->client->getSetting(Settings::DATABASE_VERSION);
         } catch (\PDOException $e) {
             return null;
         }
@@ -160,7 +162,7 @@ class Migration
 
     private function saveDatabaseVersion()
     {
-        $this->client->set('database.version', Client::FF_VERSION);
+        $this->client->setSetting(Settings::DATABASE_VERSION, Client::FF_VERSION);
     }
 
     /**
@@ -170,9 +172,8 @@ class Migration
      */
     private function hasTables()
     {
-        $sql = "SELECT COUNT(*) FROM sqlite_master";
+        $sql = 'SELECT COUNT(*) FROM sqlite_master';
         $count = (int)DBA::execute($sql)->fetchColumn();
         return $count !== 0;
     }
-
 }
