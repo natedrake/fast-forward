@@ -1,147 +1,119 @@
 <?php
-/**
- * Created by PhpStorm.
- * User: amblin
- * Date: 05/07/15
- * Time: 15:21
- */
 
 namespace phparsenal\fastforward\Command;
 
-
 use phparsenal\fastforward\Model\Setting;
+use Symfony\Component\Console\Input\InputArgument;
+use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Input\InputOption;
+use Symfony\Component\Console\Output\OutputInterface;
 
 /**
  * Save and list settings
- *
- * TODO Allow importing of many settings at once
- * TODO Use some kind of namespacing? e.g. ff.* for global, add.* for certain commands
- * TODO Allow the user to include these as variables in commands, e.g. $user.home will be replaced with its value
- * during run time
  */
-class Set extends AbstractCommand implements CommandInterface
+class Set extends InteractiveCommand
 {
+    /**
+     * Configures the current command.
+     */
+    protected function configure()
+    {
+        $this->setName('set')
+            ->setDescription('Set or get variables')
+            ->addOption('list', 'l', InputOption::VALUE_NONE, 'Show a list of all current settings.')
+            ->addOption('default', 'd', InputOption::VALUE_NONE,
+                'Display a list of supported settings and their defaults.')
+            ->addOption('import-file', 'f', InputOption::VALUE_REQUIRED, 'Import from the specified file or STDIN')
+            ->addOption('import-stdin', 'i', InputOption::VALUE_NONE, 'Import setting via STDIN pipe')
+            ->addArgument('key', InputArgument::OPTIONAL, 'Name or key of the setting')
+            ->addArgument('value', InputArgument::OPTIONAL, 'Value to be set');
+    }
 
-    protected $name = 'set';
+    protected function execute(InputInterface $input, OutputInterface $output)
+    {
+        if ($input->getOption('list')) {
+            $this->listAll($output);
+            return;
+        }
+        $client = $this->getApplication();
+        if ($input->getOption('default')) {
+            $client->getSettings()->showSupportedSettings();
+            return;
+        }
+        $importFile = $input->getOption('import-file');
+        if ($importFile !== null) {
+            $this->addLines($this->getLinesFile($importFile), $output);
+            return;
+        }
+        if ($input->getOption('import-stdin')) {
+            $this->addLines($this->getStdin(), $output);
+            return;
+        }
+        $key = $input->getArgument('key');
+        $value = $input->getArgument('value');
+        if ($key !== null && $value !== null) {
+            $client->setSetting($key, $value);
+            return;
+        }
+        if ($key !== null) {
+            $client->getSettings()->showSupportedSettings($key);
+            return;
+        }
+        throw new \RuntimeException('Calling this command without arguments can only be done interactively.');
+    }
+
+    protected function interact(InputInterface $input, OutputInterface $output)
+    {
+        if ($input->getOption('list')
+            || $input->getOption('import-stdin')
+            || $input->getOption('import-file') !== null
+        ) {
+            return;
+        }
+        parent::interact($input, $output);
+    }
 
     /**
-     * @param array $argv
+     * @param OutputInterface $output
      */
-    public function run($argv)
+    public function listAll(OutputInterface $output)
     {
-        $this->prepareArguments();
-        try {
-            $args = $this->cli->arguments;
-            $args->parse();
-        } catch (\Exception $e) {
-            $this->cli->arguments->usage($this->cli, $argv);
-            return;
-        }
-        $key = $args->get('key');
-        $value = $args->get('value');
-        if ($key !== null && $value !== null) {
-            $this->client->set($key, $value);
-            return;
-        }
-        if ($args->defined('list')) {
-            $this->listAll();
-            return;
-        }
-        $this->import($argv);
-    }
-
-    private function prepareArguments()
-    {
-        $this->cli->arguments->add(
-            array(
-                'list' => array(
-                    'prefix' => 'l',
-                    'longPrefix' => 'list',
-                    'description' => "Show a list of all current settings. Save to file: ff set -l > file.txt",
-                    'noValue' => true
-                ),
-                'set' => array(
-                    'description' => 'Command to set a variable',
-                    'required' => true
-                ),
-                'key' => array(
-                    'description' => 'Name or key of the setting',
-                ),
-                'value' => array(
-                    'description' => 'Value to be set',
-                ),
-                'file' => array(
-                    'prefix' => 'i',
-                    'longPrefix' => 'import',
-                    'description' => 'Import from the specified file',
-                )
-            )
-        );
-    }
-
-    public function listAll()
-    {
-        $this->cli->forceAnsiOff();
         $settings = Setting::select()->orderAsc('key')->all();
         foreach ($settings as $setting) {
-            $this->cli->out($setting->key . ' ' . $setting->value);
+            $output->writeln($setting->key . ' ' . $setting->value);
         }
     }
 
     /**
-     * @param array $argv
+     * @param $filepath
+     *
+     * @return array
+     *
      * @throws \Exception
      */
-    private function import($argv)
+    private function getLinesFile($filepath)
     {
-        $args = $this->cli->arguments;
-        $lines = array();
-        if ($args->defined('file')) {
-            $lines = $this->getLinesFile($args);
-        } else {
-            $this->cli->arguments->usage($this->cli, $argv);
-            $lines = $this->getLinesStdin();
+        if (!file_exists($filepath)) {
+            throw new \RuntimeException("Could not find file '{$filepath}'");
         }
-        $this->addLines($lines);
-    }
-
-    /**
-     * @return array
-     */
-    private function getLinesStdin()
-    {
-        $this->cli->info('Reading settings from stdin..')->br();
-        $h = fopen('php://stdin', 'r');
-        $lines = array();
-        while (!feof($h)) {
-            $lines[] = fgets($h);
-        }
-        fclose($h);
+        $lines = file($filepath);
         return $lines;
     }
 
     /**
-     * @param $args
-     * @return array
+     * @param string|array $lines
+     * @param OutputInterface $output
      */
-    private function getLinesFile($args)
+    private function addLines($lines, OutputInterface $output)
     {
-        $this->cli->out('Reading settings from file: ' . $args->get('file'));
-        $lines = file($args->get('file'));
-        return $lines;
-    }
-
-    /**
-     * @param $lines
-     * @throws \Exception
-     */
-    private function addLines($lines)
-    {
+        if (!is_array($lines)) {
+            $lines = explode("\n", $lines);
+        }
         foreach ($lines as $line) {
             if (preg_match('/^([^ ]+) (.*)/', $line, $matches)) {
-                $this->client->set($matches[1], $matches[2]);
+                $this->getApplication()->setSetting($matches[1], $matches[2]);
             } elseif (trim($line) !== '') {
-                $this->cli->out('Line ignored: ' . $line);
+                $output->writeln('Line ignored: ' . $line);
             }
         }
     }
